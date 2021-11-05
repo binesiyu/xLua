@@ -24,6 +24,9 @@ option ( UINT_ESPECIALLY "using custom ulong" OFF )
 option ( USING_LUAJIT "using luajit" OFF )
 option ( GC64 "using gc64" OFF )
 option ( LUAC_COMPATIBLE_FORMAT "compatible format" OFF )
+if (NOT XLUA_BUILD_CXX_STD)
+    set(XLUA_BUILD_CXX_STD 11)
+endif()
 
 find_path(XLUA_PROJECT_DIR NAMES SConstruct
     PATHS 
@@ -39,6 +42,137 @@ endif()
 
 set(LUA_SRC_PATH lua-${LUA_VERSION}/src)
 set(LUAJIT_SRC_PATH luajit-2.1.0b3/src)
+
+#begin lua-rapidjson
+set (RAPIDJSON_SRC lua-rapidjson/source/rapidjson.cpp)
+set_property(
+    SOURCE ${RAPIDJSON_SRC}
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS
+    LUA_LIB
+)
+list(APPEND THIRDPART_INC  lua-rapidjson/include)
+set (THIRDPART_SRC ${THIRDPART_SRC} ${RAPIDJSON_SRC})
+#end lua-rapidjson
+
+
+#begin yasio
+if (ANDROID)
+    if (NOT THIRDPART_LIB)
+        set(THIRDPART_LIB "-llog")
+    else()
+        set(THIRDPART_LIB "${THIRDPART_LIB} -llog")
+    endif()
+endif()
+
+set (YASIO_SRC
+    yasio/yasio/ibstream.cpp
+    yasio/yasio/obstream.cpp
+    yasio/yasio/xxsocket.cpp
+    yasio/yasio/yasio.cpp
+    yasio/yasio/bindings/lyasio.cpp
+    yasio/yasio/bindings/yasio_ni.cpp
+)
+
+
+set_property(
+    SOURCE ${YASIO_SRC}
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS
+)
+list(APPEND THIRDPART_INC yasio)
+set (THIRDPART_SRC ${THIRDPART_SRC} ${YASIO_SRC})
+#end yasio
+
+#begin lua-sproto
+set (LS_SRC 
+    lua-sproto/sproto.c
+    lua-sproto/lsproto.c
+)
+set_property(
+    SOURCE ${LS_SRC}
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS
+    LUA_LIB
+)
+list(APPEND THIRDPART_INC lua-sproto)
+set (THIRDPART_SRC ${THIRDPART_SRC} ${LS_SRC})
+#end lua-sproto
+
+#begin lfs
+set (LFS_SRC lfs/lfs.c)
+set_property(
+    SOURCE ${LFS_SRC}
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS
+    LUA_LIB
+)
+list(APPEND THIRDPART_INC  lfs)
+set (THIRDPART_SRC ${THIRDPART_SRC} ${LFS_SRC})
+#end lfs
+
+#begin lpeg
+set ( LPEG_SRC
+    lpeg/lpcap.c
+    lpeg/lpcode.c
+    lpeg/lpprint.c
+    lpeg/lptree.c
+    lpeg/lpvm.c
+)
+set_property(
+    SOURCE ${LPEG_SRC}
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS
+    LUA_LIB
+)
+list(APPEND THIRDPART_INC  lpeg)
+set (THIRDPART_SRC ${THIRDPART_SRC} ${LPEG_SRC})
+#end lpeg
+
+#begin FFI
+if (NOT USING_LUAJIT)
+    set (FFI_SRC ffi/parser.c ffi/ctype.c ffi/ffi.c)
+    set_property(
+        SOURCE ${FFI_SRC}
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS
+        LUA_LIB
+    )
+    list(APPEND THIRDPART_INC  ffi)
+    set (THIRDPART_SRC ${THIRDPART_SRC} ${FFI_SRC})
+endif ()
+#end FFI
+
+#begin lua-crypt
+ set (CRYPT_SRC lua-crypt.c lsha1.c)
+ set_property(
+     SOURCE ${CRYPT_SRC}
+     APPEND
+     PROPERTY COMPILE_DEFINITIONS
+     LUA_LIB
+ )
+ list(APPEND THIRDPART_INC ./)
+ set (THIRDPART_SRC ${THIRDPART_SRC} ${CRYPT_SRC})
+#end lua-crypt
+
+#begin lua-zlib
+set (LUAZLIB_SRC 
+    lua-zlib/lua_zlib.c
+)
+set_property(
+    SOURCE ${LUAZLIB_SRC}
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS
+    LUA_LIB
+)
+list(APPEND THIRDPART_INC  lua-zlib)
+set (THIRDPART_SRC ${THIRDPART_SRC} ${LUAZLIB_SRC})
+if (NOT THIRDPART_LIB)
+    set (THIRDPART_LIB "-lz")
+else()
+    set(THIRDPART_LIB "${THIRDPART_LIB} -lz")
+endif()
+#end lua-zlib
 
 if (USING_LUAJIT)
 	
@@ -236,3 +370,38 @@ else ( )
         )
     endif()
 endif ( )
+# --- The compiler flags
+message("-- Building xlua with cpp${XLUA_BUILD_CXX_STD} support")
+if ( IOS )
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fembed-bitcode")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fembed-bitcode")
+endif ()
+if (NOT WIN32 OR CYGWIN)
+    if (XLUA_BUILD_CXX_STD EQUAL 17)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++1z")
+        if ( IOS )
+            # Aligned deallocation function of type 'void (void *, std::align_val_t) noexcept' is only available on iOS 11 or newer
+            # most of time, low level malloc will alloc a aligned address for new operator,
+            # so it's ok to add -faligned-allocation, certainly, still need find a ios9.0 device
+            # to test does it works well?
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -faligned-allocation")
+        endif()
+    elseif(XLUA_BUILD_CXX_STD EQUAL 14)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++1y")
+    else()
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    endif()
+else()
+    if(XLUA_BUILD_CXX_STD EQUAL 17)
+        # target_compile_features(yasio PUBLIC cxx_std_17) works
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++17")
+    elseif(XLUA_BUILD_CXX_STD EQUAL 14)
+        # target_compile_features(yasio PUBLIC cxx_std_14) not works
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++14")
+    endif()
+endif()
+if (NOT MSVC)
+    # !!!important pitfall: fix default lua_newuserdata can't return aligned pointer properly
+    # will crash at clang release optimized build if no follow definiation
+    target_compile_definitions (xlua PUBLIC LUAI_USER_ALIGNMENT_T=max_align_t)
+endif()

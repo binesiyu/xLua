@@ -1536,6 +1536,69 @@ static int str_unpack (lua_State *L) {
   return n + 1;
 }
 
+static int ptr_unpack (lua_State *L) {
+  Header h;
+  const char *fmt = luaL_checkstring(L, 1);
+  const char *data = (char *)luaL_checkinteger(L, 2);
+  size_t ld = luaL_checkinteger(L, 4);
+  luaL_argcheck(L, ld > 0, 4, "buffer size must great then zero.");
+  size_t pos = (size_t)posrelat(luaL_optinteger(L, 3, 1), ld) - 1;
+  int n = 0;  /* number of results */
+  luaL_argcheck(L, pos <= ld, 3, "initial position out of buffer");
+  initheader(L, &h);
+  while (*fmt != '\0') {
+    int size, ntoalign;
+    KOption opt = getdetails(&h, pos, &fmt, &size, &ntoalign);
+    if ((size_t)ntoalign + size > ~pos || pos + ntoalign + size > ld)
+      luaL_argerror(L, 2, "data string too short");
+    pos += ntoalign;  /* skip alignment */
+    /* stack space for item + next position */
+    luaL_checkstack(L, 2, "too many results");
+    n++;
+    switch (opt) {
+      case Kint:
+      case Kuint: {
+        lua_Integer res = unpackint(L, data + pos, h.islittle, size,
+                                       (opt == Kint));
+        lua_pushinteger(L, res);
+        break;
+      }
+      case Kfloat: {
+        volatile Ftypes u;
+        lua_Number num;
+        copywithendian(u.buff, data + pos, size, h.islittle);
+        if (size == sizeof(u.f)) num = (lua_Number)u.f;
+        else if (size == sizeof(u.d)) num = (lua_Number)u.d;
+        else num = u.n;
+        lua_pushnumber(L, num);
+        break;
+      }
+      case Kchar: {
+        lua_pushlstring(L, data + pos, size);
+        break;
+      }
+      case Kstring: {
+        size_t len = (size_t)unpackint(L, data + pos, h.islittle, size, 0);
+        luaL_argcheck(L, pos + len + size <= ld, 2, "data string too short");
+        lua_pushlstring(L, data + pos + size, len);
+        pos += len;  /* skip string */
+        break;
+      }
+      case Kzstr: {
+        size_t len = (int)strlen(data + pos);
+        lua_pushlstring(L, data + pos, len);
+        pos += len + 1;  /* skip string plus final '\0' */
+        break;
+      }
+      case Kpaddalign: case Kpadding: case Knop:
+        n--;  /* undo increment */
+        break;
+    }
+    pos += size;
+  }
+  lua_pushinteger(L, pos + 1);  /* next position */
+  return n + 1;
+}
 /* }====================================================== */
 
 
@@ -1557,6 +1620,7 @@ static const luaL_Reg strlib[] = {
   {"pack", str_pack},
   {"packsize", str_packsize},
   {"unpack", str_unpack},
+  {"ptr_unpack", ptr_unpack},
   {NULL, NULL}
 };
 
