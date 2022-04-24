@@ -1725,7 +1725,7 @@ namespace XLua
                 }
             }
 
-            List<string> args = new List<string>() { assembly_csharp_path, typeof(LuaEnv).Module.FullyQualifiedName,typeof(DelegateBridgeExtern).Module.FullyQualifiedName, id_map_file_path, hotfix_cfg_in_editor };
+            List<string> args = new List<string>() { assembly_csharp_path, typeof(LuaEnv).Module.FullyQualifiedName,typeof(DelegateBridge).Module.FullyQualifiedName, id_map_file_path, hotfix_cfg_in_editor };
 
             foreach (var path in
                 (from asm in AppDomain.CurrentDomain.GetAssemblies() select asm.ManifestModule.FullyQualifiedName)
