@@ -25,17 +25,18 @@ namespace XLua
             {
                 var injectAssmblyPath = Path.GetFullPath(args[0]);
                 var xluaAssmblyPath = Path.GetFullPath(args[1]);
+                var delegateAssmblyPath = Path.GetFullPath(args[2]);
                 string cfg_append = null;
-                if (args.Length > 3)
+                if (args.Length > 4)
                 {
-                    cfg_append = Path.GetFullPath(args[3]);
+                    cfg_append = Path.GetFullPath(args[4]);
                     if (!cfg_append.EndsWith(".data"))
                     {
                         cfg_append = null;
                     }
                 }
                 AppDomain currentDomain = AppDomain.CurrentDomain;
-                List<string> search_paths = args.Skip(cfg_append == null ? 3 : 4).ToList();
+                List<string> search_paths = args.Skip(cfg_append == null ? 4 : 5).ToList();
                 currentDomain.AssemblyResolve += new ResolveEventHandler((object sender, ResolveEventArgs rea) =>
                 {
                     foreach (var search_path in search_paths)
@@ -67,7 +68,7 @@ namespace XLua
                         }
                     }
                 }
-                Hotfix.HotfixInject(injectAssmblyPath, xluaAssmblyPath, args.Skip(cfg_append == null ? 3 : 3), args[2], hotfixCfg);
+                Hotfix.HotfixInject(injectAssmblyPath, xluaAssmblyPath,delegateAssmblyPath,args.Skip(cfg_append == null ? 4 : 4), args[3], hotfixCfg);
             }
             catch(Exception e)
             {

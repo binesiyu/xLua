@@ -10,6 +10,9 @@ using System.Collections.Generic;
 using System;
 using UnityEngine;
 using XLua;
+using XLuaHotFixDll;
+using XLuaTest;
+
 //using System.Reflection;
 //using System.Linq;
 
@@ -48,6 +51,7 @@ public static class ExampleGenConfig
                 typeof(Mathf),
                 typeof(System.Collections.Generic.List<int>),
                 typeof(Action<string>),
+                typeof(HotFixDll),
                 typeof(UnityEngine.Debug)
             };
 
@@ -60,6 +64,15 @@ public static class ExampleGenConfig
                 typeof(Action<double>),
                 typeof(UnityEngine.Events.UnityAction),
                 typeof(System.Collections.IEnumerator)
+            };
+
+    [Hotfix(HotfixFlag.Inline)]
+    public static List<Type> hotFixTest = new List<Type>() {
+                typeof(HotfixTest),
+            };
+    [Hotfix(HotfixFlag.IntKey)]
+    public static List<Type> hotFixDll = new List<Type>() {
+                typeof(HotFixDll),
             };
 
     //黑名单

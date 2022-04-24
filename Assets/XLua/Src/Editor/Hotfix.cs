@@ -279,12 +279,16 @@ namespace XLua
         private List<MethodDefinition> bridgeIndexByKey = null;
 
         private bool isTheSameAssembly = false;
+        private bool isXLuaTheSameAssembly = false;
+        private bool isTheSameAssemblyDelegate = false;
 
         private int delegateId = 0;
 
-        public void Init(AssemblyDefinition injectAssembly, AssemblyDefinition xluaAssembly, IEnumerable<string> searchDirectorys, Dictionary<string, int> hotfixCfg)
+        public void Init(AssemblyDefinition injectAssembly, AssemblyDefinition xluaAssembly,AssemblyDefinition delegateAssmbly, IEnumerable<string> searchDirectorys, Dictionary<string, int> hotfixCfg)
         {
             isTheSameAssembly = injectAssembly == xluaAssembly;
+            isTheSameAssemblyDelegate = injectAssembly == delegateAssmbly;
+            isXLuaTheSameAssembly = (xluaAssembly == delegateAssmbly) && (injectAssembly == delegateAssmbly);
             this.injectAssembly = injectAssembly;
             this.hotfixCfg = hotfixCfg;
             var injectModule = injectAssembly.MainModule;
@@ -306,9 +310,21 @@ namespace XLua
             inParams = injectModule.TryImport(delegateBridgeTypeDef.Methods.Single(m => m.Name == "InParams"));
             outParam = injectModule.TryImport(delegateBridgeTypeDef.Methods.Single(m => m.Name == "OutParam"));
 
-            hotfixBridgesDef = (from method in delegateBridgeTypeDef.Methods
-                              where method.Name.StartsWith("__Gen_Delegate_Imp")
-                              select method).ToList();
+            if (xluaAssembly == delegateAssmbly)
+            {
+                hotfixBridgesDef = (from method in delegateBridgeTypeDef.Methods
+                                  where method.Name.StartsWith("__Gen_Delegate_Imp")
+                                  select method).ToList();
+            }
+            else
+            {
+
+                var delegateBridgeTypeDefExtern = delegateAssmbly.MainModule.Types.Single(t => t.FullName == "XLua.DelegateBridgeExtern");
+                injectModule.TryImport(delegateBridgeTypeDefExtern);
+                hotfixBridgesDef = (from method in delegateBridgeTypeDefExtern.Methods
+                                  where method.Name.StartsWith("__Gen_Delegate_Imp")
+                                  select method).ToList();
+            }
             hotfixBridgeToDelegate = new Dictionary<MethodDefinition, MethodDefinition>();
             delegateId = 0;
 
@@ -318,9 +334,14 @@ namespace XLua
 
             var resolverOfInjectAssembly = injectAssembly.MainModule.AssemblyResolver as BaseAssemblyResolver;
             var resolverOfXluaAssembly = xluaAssembly.MainModule.AssemblyResolver as BaseAssemblyResolver;
+            var resolverOfXluaDelegateAssembly = delegateAssmbly.MainModule.AssemblyResolver as BaseAssemblyResolver;
             if (!isTheSameAssembly)
             {
                 resolverOfXluaAssembly.AddSearchDirectory(Path.GetDirectoryName(injectAssembly.MainModule.FullyQualifiedName));
+            }
+            if (!isXLuaTheSameAssembly)
+            {
+                resolverOfXluaDelegateAssembly.AddSearchDirectory(Path.GetDirectoryName(injectAssembly.MainModule.FullyQualifiedName));
             }
             Action<string> addSearchDirectory = (string dir) =>
             {
@@ -328,6 +349,10 @@ namespace XLua
                 if (!isTheSameAssembly)
                 {
                     resolverOfXluaAssembly.AddSearchDirectory(dir);
+                }
+                if (!isXLuaTheSameAssembly)
+                {
+                    resolverOfXluaDelegateAssembly.AddSearchDirectory(dir);
                 }
             };
             addSearchDirectory("./Library/ScriptAssemblies/");
@@ -499,7 +524,7 @@ namespace XLua
         {
             bool ignoreValueType = hotfixType.HasFlag(HotfixFlagInTool.ValueTypeBoxing);
 
-            bool isIntKey = hotfixType.HasFlag(HotfixFlagInTool.IntKey) && !method.DeclaringType.HasGenericParameters && isTheSameAssembly;
+            bool isIntKey = hotfixType.HasFlag(HotfixFlagInTool.IntKey) && !method.DeclaringType.HasGenericParameters && isTheSameAssemblyDelegate;
 
             bool isAdaptByDelegate = !isIntKey && hotfixType.HasFlag(HotfixFlagInTool.AdaptByDelegate);
 
@@ -553,7 +578,7 @@ namespace XLua
                     {
                         continue;
                     }
-                    invoke = (isTheSameAssembly && !isAdaptByDelegate) ? hotfixBridgeDef : getDelegateInvokeFor(method, hotfixBridgeDef, ignoreValueType);
+                    invoke = (isTheSameAssemblyDelegate && !isAdaptByDelegate) ? hotfixBridgeDef : getDelegateInvokeFor(method, hotfixBridgeDef, ignoreValueType);
                     return true;
                 }
             }
@@ -664,7 +689,7 @@ namespace XLua
             }
             var parameters = method.Parameters;
 
-            if (!method.IsStatic 
+            if (!method.IsStatic
                 && (hasGenericParameter(method.DeclaringType) || ((!ignoreValueType && method.DeclaringType.IsValueType) && isNoPublic(method.DeclaringType))))
             {
                     return true;
@@ -692,7 +717,7 @@ namespace XLua
             {
                 return true;
             }
-            CustomAttribute hotfixAttr = type.CustomAttributes.FirstOrDefault(ca => ca.AttributeType == hotfixAttributeType);
+            CustomAttribute hotfixAttr = type.CustomAttributes.FirstOrDefault(ca => ca.AttributeType.FullName == hotfixAttributeType.FullName);
             HotfixFlagInTool hotfixType;
             if (hotfixAttr != null)
             {
@@ -744,7 +769,7 @@ namespace XLua
                 if (method.Name != ".cctor" && !method.IsAbstract && !method.IsPInvokeImpl && method.Body != null && !method.Name.Contains("<"))
                 {
                     //Debug.Log(method);
-                    if ((isInline || method.HasGenericParameters || genericInOut(method, hotfixType)) 
+                    if ((isInline || method.HasGenericParameters || genericInOut(method, hotfixType))
                         ? !injectGenericMethod(method, hotfixType) :
                         !injectMethod(method, hotfixType))
                     {
@@ -853,14 +878,15 @@ namespace XLua
 #endif
         }
 
-        public static void HotfixInject(string injectAssemblyPath, string xluaAssemblyPath, IEnumerable<string> searchDirectorys, string idMapFilePath, Dictionary<string, int> hotfixConfig)
+        public static void HotfixInject(string injectAssemblyPath, string xluaAssemblyPath,string delegateAssmblyPath, IEnumerable<string> searchDirectorys, string idMapFilePath, Dictionary<string, int> hotfixConfig)
         {
             AssemblyDefinition injectAssembly = null;
             AssemblyDefinition xluaAssembly = null;
+            AssemblyDefinition delegateAssmbly= null;
             try
             {
                 injectAssembly = readAssembly(injectAssemblyPath);
-                
+
                 // injected flag check
                 if (injectAssembly.MainModule.Types.Any(t => t.Name == "__XLUA_GEN_FLAG"))
                 {
@@ -870,11 +896,15 @@ namespace XLua
                 injectAssembly.MainModule.Types.Add(new TypeDefinition("__XLUA_GEN", "__XLUA_GEN_FLAG", Mono.Cecil.TypeAttributes.Class,
                     injectAssembly.MainModule.TypeSystem.Object));
 
-                xluaAssembly = (injectAssemblyPath == xluaAssemblyPath || injectAssembly.MainModule.FullyQualifiedName == xluaAssemblyPath) ? 
+                xluaAssembly = (injectAssemblyPath == xluaAssemblyPath || injectAssembly.MainModule.FullyQualifiedName == xluaAssemblyPath) ?
                     injectAssembly : readAssembly(xluaAssemblyPath);
 
+                delegateAssmbly = (xluaAssemblyPath == delegateAssmblyPath || xluaAssembly.MainModule.FullyQualifiedName == delegateAssmblyPath) ?
+                                xluaAssembly : (injectAssemblyPath == delegateAssmblyPath || injectAssembly.MainModule.FullyQualifiedName == delegateAssmblyPath) ?
+                                injectAssembly : readAssembly(delegateAssmblyPath);
+
                 Hotfix hotfix = new Hotfix();
-                hotfix.Init(injectAssembly, xluaAssembly, searchDirectorys, hotfixConfig);
+                hotfix.Init(injectAssembly, xluaAssembly,delegateAssmbly, searchDirectorys, hotfixConfig);
 
                 //var hotfixDelegateAttributeType = assembly.MainModule.Types.Single(t => t.FullName == "XLua.HotfixDelegateAttribute");
                 var hotfixAttributeType = xluaAssembly.MainModule.Types.Single(t => t.FullName == "XLua.HotfixAttribute");
@@ -906,6 +936,10 @@ namespace XLua
                 if (xluaAssembly != null)
                 {
                     Clean(xluaAssembly);
+                }
+                if (delegateAssmbly != null)
+                {
+                    Clean(delegateAssmbly);
                 }
             }
         }
@@ -1007,7 +1041,7 @@ namespace XLua
             {
                 var instruction = instructions[i];
                 Instruction target = instruction.Operand as Instruction;
-                
+
                 if (target != null)
                 {
                     int diff = target.Offset - instruction.Offset;
@@ -1048,7 +1082,7 @@ namespace XLua
             {
                 return null;
             }
-            //if (type.IsGenericInstance && 
+            //if (type.IsGenericInstance &&
             //    (method.Module.Assembly.FullName != type.Module.Assembly.FullName || method.Module.Assembly.FullName != td.Module.Assembly.FullName
             //    || method.Module.FullyQualifiedName != type.Module.FullyQualifiedName || method.Module.FullyQualifiedName != td.Module.FullyQualifiedName))
             //{
@@ -1177,7 +1211,7 @@ namespace XLua
         bool injectMethod(MethodDefinition method, HotfixFlagInTool hotfixType)
         {
             var type = method.DeclaringType;
-            
+
             bool isFinalize = (method.Name == "Finalize" && method.IsSpecialName);
 
             MethodReference invoke = null;
@@ -1203,7 +1237,7 @@ namespace XLua
 
             FieldReference fieldReference = null;
             VariableDefinition injection = null;
-            bool isIntKey = hotfixType.HasFlag(HotfixFlagInTool.IntKey) && !type.HasGenericParameters && isTheSameAssembly;
+            bool isIntKey = hotfixType.HasFlag(HotfixFlagInTool.IntKey) && !type.HasGenericParameters && isTheSameAssemblyDelegate;
             //isIntKey = !type.HasGenericParameters;
 
             if (!isIntKey)
@@ -1284,7 +1318,7 @@ namespace XLua
                     if (i == 0 && !method.IsStatic && type.IsValueType)
                     {
                         processor.InsertBefore(insertPoint, processor.Create(OpCodes.Ldobj, type));
-                        
+
                     }
                     if (ignoreValueType)
                     {
@@ -1346,12 +1380,12 @@ namespace XLua
         bool injectGenericMethod(MethodDefinition method, HotfixFlagInTool hotfixType)
         {
             //如果注入的是xlua所在之外的Assembly的话，不支持该方式
-            if (!isTheSameAssembly)
+            if (!(isTheSameAssemblyDelegate && isXLuaTheSameAssembly))
             {
                 return true;
             }
             var type = method.DeclaringType;
-            
+
             bool isFinalize = (method.Name == "Finalize" && method.IsSpecialName);
             bool isIntKey = hotfixType.HasFlag(HotfixFlagInTool.IntKey) && !type.HasGenericParameters;
             //isIntKey = !type.HasGenericParameters;
@@ -1691,7 +1725,7 @@ namespace XLua
                 }
             }
 
-            List<string> args = new List<string>() { assembly_csharp_path, typeof(LuaEnv).Module.FullyQualifiedName, id_map_file_path, hotfix_cfg_in_editor };
+            List<string> args = new List<string>() { assembly_csharp_path, typeof(LuaEnv).Module.FullyQualifiedName,typeof(DelegateBridgeExtern).Module.FullyQualifiedName, id_map_file_path, hotfix_cfg_in_editor };
 
             foreach (var path in
                 (from asm in AppDomain.CurrentDomain.GetAssemblies() select asm.ManifestModule.FullyQualifiedName)
@@ -1710,7 +1744,15 @@ namespace XLua
             var idMapFileNames = new List<string>();
             foreach (var injectAssemblyPath in injectAssemblyPaths)
             {
-                args[0] = Path.Combine(assemblyDir, Path.GetFileName(injectAssemblyPath));
+                var path =  Path.Combine(assemblyDir, Path.GetFileName(injectAssemblyPath));
+                if (File.Exists(path))
+                {
+                    args[0] = path;
+                }
+                else
+                {
+                    args[0] = injectAssemblyPath;
+                }
                 if (ContainNotAsciiChar(args[0]))
                 {
                     throw new Exception("project path must contain only ascii characters");
@@ -1719,8 +1761,8 @@ namespace XLua
                 if (injectAssemblyPaths.Count > 1)
                 {
                     var injectAssemblyFileName = Path.GetFileName(injectAssemblyPath);
-                    args[2] = CSObjectWrapEditor.GeneratorConfig.common_path + "Resources/hotfix_id_map_" + injectAssemblyFileName.Substring(0, injectAssemblyFileName.Length - 4) + ".lua.txt";
-                    idMapFileNames.Add(args[2]);
+                    args[3] = CSObjectWrapEditor.GeneratorConfig.common_path + "Resources/hotfix_id_map_" + injectAssemblyFileName.Substring(0, injectAssemblyFileName.Length - 4) + ".lua.txt";
+                    idMapFileNames.Add(args[3]);
                 }
                 Process hotfix_injection = new Process();
                 hotfix_injection.StartInfo.FileName = mono_path;
